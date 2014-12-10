@@ -9,7 +9,7 @@
 packages/
 
 # Generated documentation folder
-docs/output/
+regression/docs/output/
 
 # Temp folder used for publishing docs
 temp/
@@ -21,6 +21,6 @@ TestResults.xml
 release.cmd
 release.sh
 paket-files
-.paket/paket.exe
-docs/content/license.md
-docs/content/release-notes.md
+regression/.paket/paket.exe
+regression/docs/content/license.md
+regression/docs/content/release-notes.md

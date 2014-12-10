@@ -67,7 +67,7 @@
     <Reference Include="System.Numerics" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\..\FSharp.Core.Shim.fs">
+    <Compile Include="..\..\..\FSharp.Core.Shim.fs">
       <Link>FSharp.Core.Shim.fs</Link>
     </Compile>
   </ItemGroup>
