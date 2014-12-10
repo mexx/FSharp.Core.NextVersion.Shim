@@ -2,7 +2,7 @@
 // FAKE build script
 // --------------------------------------------------------------------------------------
 
-#r @"regression/packages/FAKE/tools/FakeLib.dll"
+#r @"packages/FAKE/tools/FakeLib.dll"
 
 open Fake
 open Fake.Git
@@ -12,7 +12,7 @@ open System
 open System.IO
 #if MONO
 #else
-#load "regression/packages/SourceLink.Fake/Tools/Fake.fsx"
+#load "packages/SourceLink.Fake/Tools/Fake.fsx"
 open SourceLink
 #endif
 
@@ -66,7 +66,7 @@ let gitRaw = environVarOrDefault "gitRaw" "https://raw.github.com/mexx"
 // --------------------------------------------------------------------------------------
 
 // Read additional information from the release notes document
-let release = LoadReleaseNotes "RELEASE_NOTES.md"
+let release = LoadReleaseNotes "../RELEASE_NOTES.md"
 
 let genFSAssemblyInfo (projectPath) =
     let projectName = System.IO.Path.GetFileNameWithoutExtension(projectPath)
@@ -191,11 +191,11 @@ let generateHelp fail =
 
 Target "GenerateHelp" (fun _ ->
     DeleteFile "docs/content/release-notes.md"    
-    CopyFile "docs/content/" "RELEASE_NOTES.md"
+    CopyFile "docs/content/" "../RELEASE_NOTES.md"
     Rename "docs/content/release-notes.md" "docs/content/RELEASE_NOTES.md"
 
     DeleteFile "docs/content/license.md"
-    CopyFile "docs/content/" "LICENSE.txt"
+    CopyFile "docs/content/" "../LICENSE.txt"
     Rename "docs/content/license.md" "docs/content/LICENSE.txt"
 
     generateHelp true

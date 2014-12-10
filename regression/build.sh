@@ -2,7 +2,6 @@
 if test "$OS" = "Windows_NT"
 then
   # use .Net
-  cd regression
 
   .paket/paket.bootstrapper.exe
   exit_code=$?
@@ -16,12 +15,8 @@ then
   	exit $exit_code
   fi
 
-  cd ..
-
-  regression/packages/FAKE/tools/FAKE.exe $@ --fsiargs -d:MONO build.fsx 
+  packages/FAKE/tools/FAKE.exe $@ --fsiargs -d:MONO build.fsx 
 else
-  cd regression
-
   # use mono
   mono .paket/paket.bootstrapper.exe
   exit_code=$?
@@ -35,7 +30,5 @@ else
   	exit $exit_code
   fi
 
-  cd ..
-
-  mono regression/packages/FAKE/tools/FAKE.exe $@ --fsiargs -d:MONO build.fsx 
+  mono packages/FAKE/tools/FAKE.exe $@ --fsiargs -d:MONO build.fsx 
 fi
