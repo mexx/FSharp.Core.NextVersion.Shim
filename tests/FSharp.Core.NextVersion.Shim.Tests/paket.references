@@ -3,3 +3,5 @@ NUnit
 File:LibraryTestFx.fs .
 File:ArrayModule.fs .
 File:ArrayModule2.fs .
+File:ListModule.fs .
+File:ListModule2.fs .

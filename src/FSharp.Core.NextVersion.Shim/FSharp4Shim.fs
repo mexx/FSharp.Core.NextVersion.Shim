@@ -21,17 +21,31 @@ namespace Microsoft.FSharp.Core
         let inputSequenceTooLong = "The input sequence contains more than one element."
         let arraysHadDifferentLengths = "The arrays have different lengths."
         let outOfRange = "The index is outside the legal range."
+        let inputListWasEmpty = "The input list was empty."
+        let indexOutOfBounds = "The index was outside the range of elements in the list."
 
         let GetString(name:System.String) : System.String = name
+
+namespace Local.LanguagePrimitives
+    module ErrorStrings =
+        open Microsoft.FSharp.Core
+
+        let InputArrayEmptyString = SR.GetString(SR.arrayWasEmpty)
+        let InputSequenceEmptyString = SR.GetString(SR.inputSequenceEmpty)
+        let InputMustBeNonNegativeString = SR.GetString(SR.inputMustBeNonNegative)
 
 namespace Microsoft.FSharp.Primitives.Basics
 
     module internal Array =
         open Microsoft.FSharp.Core
+        open System.Collections.Generic
 
         // The input parameter should be checked by callers if necessary
         let inline zeroCreateUnchecked (count:int) =
             Array.zeroCreate count
+
+        let inline fastComparerForArraySort<'t when 't : comparison> () =
+            Comparer.Default
 
         let inline indexNotFound() = raise (new System.Collections.Generic.KeyNotFoundException(SR.GetString(SR.keyNotFoundAlt)))
 
@@ -91,6 +105,54 @@ namespace Microsoft.FSharp.Primitives.Basics
 
     module internal List =
         open System.Collections.Generic
+        open Local.LanguagePrimitives.ErrorStrings
+        open Microsoft.FSharp.Core
+
+        let private arrayZeroCreate = Array.zeroCreate
+
+        let rec distinctToFreshConsTail (cons: LinkedList<_>) (hashSet:HashSet<_>) (list:'T list) =
+            match list with
+            | [] -> ()
+            | (x::rest) ->
+                if hashSet.Add(x) then
+                    cons.AddLast(x) |> ignore
+                    distinctToFreshConsTail cons hashSet rest
+                else
+                    distinctToFreshConsTail cons hashSet rest
+
+        let distinctWithComparer (comparer: System.Collections.Generic.IEqualityComparer<'T>) (list:'T list) =
+            match list with
+            | [] -> []
+            | [h] -> [h]
+            | (x::rest) ->
+                let hashSet =  System.Collections.Generic.HashSet<'T>(comparer)
+                hashSet.Add(x) |> ignore
+                let cons = LinkedList<'T>()
+                cons.AddLast(x) |> ignore
+                distinctToFreshConsTail cons hashSet rest
+                cons |> Seq.toList
+
+        let rec distinctByToFreshConsTail (cons: LinkedList<_>) (hashSet:HashSet<_>) keyf (list:'T list) =
+            match list with
+            | [] -> ()
+            | (x::rest) ->
+                if hashSet.Add(keyf x) then
+                    cons.AddLast(x) |> ignore
+                    distinctByToFreshConsTail cons hashSet keyf rest
+                else
+                    distinctByToFreshConsTail cons hashSet keyf rest
+
+        let distinctByWithComparer (comparer: System.Collections.Generic.IEqualityComparer<'Key>) (keyf:'T -> 'Key) (list:'T list) =
+            match list with
+            | [] -> []
+            | [h] -> [h]
+            | (x::rest) ->
+                let hashSet = System.Collections.Generic.HashSet<'Key>(comparer)
+                hashSet.Add(keyf x) |> ignore
+                let cons = LinkedList<'T>()
+                cons.AddLast(x) |> ignore
+                distinctByToFreshConsTail cons hashSet keyf rest
+                cons |> Seq.toList
 
         let rec mapFoldToFreshConsTail (cons: LinkedList<'U>) (f:OptimizedClosures.FSharpFunc<'State, 'T, 'U * 'State>) acc xs =
             match xs with
@@ -114,12 +176,176 @@ namespace Microsoft.FSharp.Primitives.Basics
                 let s' = mapFoldToFreshConsTail cons f s' t
                 (cons |> Seq.toList), s'
 
-namespace Local.LanguagePrimitives
-    module ErrorStrings =
-        open Microsoft.FSharp.Core
+        let rec takeFreshConsTail (cons: LinkedList<_>) n (l:'T list) =
+            if n = 0 then () else
+            match l with
+            | [] -> raise <| System.InvalidOperationException (SR.GetString(SR.notEnoughElements))
+            | x::xs ->
+                cons.AddLast(x) |> ignore
+                takeFreshConsTail cons (n - 1) xs
 
-        let InputArrayEmptyString = SR.GetString(SR.arrayWasEmpty)
-        let InputSequenceEmptyString = SR.GetString(SR.inputSequenceEmpty)
+        let take n (l:'T list) =
+            if n < 0 then invalidArg "count" InputMustBeNonNegativeString
+            if n = 0 then [] else 
+            match l with
+            | [] -> raise <| System.InvalidOperationException (SR.GetString(SR.notEnoughElements))
+            | x::xs ->
+                let cons = LinkedList<_>()
+                cons.AddLast(x) |> ignore
+                takeFreshConsTail cons (n - 1) xs
+                cons |> Seq.toList
+
+        let rec takeWhileFreshConsTail (cons: LinkedList<_>) p (l:'T list) =
+            match l with
+            | [] -> ()
+            | x::xs ->
+                if not (p x) then () else
+                cons.AddLast(x) |> ignore
+                takeWhileFreshConsTail cons p xs
+
+        let takeWhile p (l: 'T list) =
+            match l with
+            | [] -> l
+            | x :: ([] as nil) -> if p x then l else nil
+            | x::xs ->
+                if not (p x) then [] else
+                let cons = LinkedList<_>()
+                cons.AddLast(x) |> ignore
+                takeWhileFreshConsTail cons p xs
+                cons |> Seq.toList
+
+        let rec splitAtFreshConsTail (cons: LinkedList<_>) index (l:'T list) =
+            if index = 0 then
+                l
+            else
+            match l with
+            | [] -> raise <| System.InvalidOperationException (SR.GetString(SR.notEnoughElements))
+            | x :: xs ->
+                cons.AddLast(x) |> ignore
+                splitAtFreshConsTail cons (index - 1) xs
+
+        let splitAt index (l:'T list) =
+            if index < 0 then invalidArg "index" (SR.GetString(SR.inputMustBeNonNegative))
+            if index = 0 then [], l else
+            match l with
+            | []  -> raise <| System.InvalidOperationException (SR.GetString(SR.notEnoughElements))
+            | [_] -> if index = 1 then l, [] else raise <| System.InvalidOperationException (SR.GetString(SR.notEnoughElements))
+            | x::xs ->
+                if index = 1 then [x], xs else
+                let cons = LinkedList<_>()
+                cons.AddLast(x) |> ignore
+                let tail = splitAtFreshConsTail cons (index - 1) xs
+                cons |> Seq.toList, tail
+
+        let rec filterToFreshConsTail (cons: LinkedList<_>) f (l:'T list) =
+            match l with
+            | [] -> ()
+            | h::t -> 
+                if f h then 
+                    cons.AddLast(h) |> ignore
+                    filterToFreshConsTail cons f t
+                else 
+                    filterToFreshConsTail cons f t
+
+        let rec filter f (l:'T list) =
+            match l with 
+            | [] -> l
+            | h :: ([] as nil) -> if f h then l else nil
+            | h::t ->
+                if f h then
+                    let cons = LinkedList<_>()
+                    cons.AddLast(h) |> ignore
+                    filterToFreshConsTail cons f t;
+                    cons |> Seq.toList
+                else
+                    filter f t
+
+        let rec indexedToFreshConsTail (cons: LinkedList<_>) (xs:'T list) i =
+            match xs with
+            | [] -> ()
+            | (h::t) ->
+                cons.AddLast((i, h)) |> ignore
+                indexedToFreshConsTail cons t (i+1)
+
+        let indexed (xs:'T list) =
+            match xs with
+            | [] -> []
+            | [h] -> [(0,h)]
+            | (h::t) ->
+                let cons = LinkedList<_>()
+                cons.AddLast((0,h)) |> ignore
+                indexedToFreshConsTail cons t 1
+                cons |> Seq.toList
+
+        let rec truncateToFreshConsTail (cons: LinkedList<_>) count (list:'T list) =
+            if count = 0 then () else
+            match list with
+            | [] -> ()
+            | h::t ->
+                cons.AddLast(h) |> ignore
+                truncateToFreshConsTail cons (count-1) t
+
+        let truncate count (list:'T list) =
+            if count < 0 then invalidArg "count" (SR.GetString(SR.inputMustBeNonNegative))
+            match list with
+            | [] -> list
+            | _ :: ([] as nil) -> if count > 0 then list else nil
+            | h::t ->
+                if count = 0 then []
+                else
+                    let cons = LinkedList<_>()
+                    cons.AddLast(h) |> ignore
+                    truncateToFreshConsTail cons (count-1) t
+                    cons |> Seq.toList
+
+        let rec unfoldToFreshConsTail (cons: LinkedList<_>) (f:'State -> ('T * 'State) option) s =
+            match f s with
+            | None -> ()
+            | Some (x,s') ->
+                cons.AddLast(x) |> ignore
+                unfoldToFreshConsTail cons f s'
+
+        let unfold (f:'State -> ('T * 'State) option) (s:'State) =
+            match f s with
+            | None -> []
+            | Some (x,s') ->
+                let cons = LinkedList<_>()
+                cons.AddLast(x) |> ignore
+                unfoldToFreshConsTail cons f s'
+                cons |> Seq.toList
+
+        let rec windowedToFreshConsTail (cons: LinkedList<_>) windowSize i (l:'T list) (arr:'T[]) =
+            match l with
+            | [] -> ()
+            | h::t ->
+                arr.[i] <- h
+                let i = (i+1) % windowSize
+                let result = arrayZeroCreate windowSize : 'T[]
+                System.Array.Copy(arr, i, result, 0, windowSize - i)
+                System.Array.Copy(arr, 0, result, windowSize - i, i)
+                cons.AddLast(result) |> ignore
+                windowedToFreshConsTail cons windowSize i t arr
+
+        let windowed windowSize (list:'T list) =
+            if windowSize <= 0 then invalidArg "windowSize" (SR.GetString(SR.inputMustBeNonNegative))
+            match list with
+            | [] -> []
+            | _ ->
+                let arr = arrayZeroCreate windowSize
+                let rec loop i r l =
+                    match l with
+                    | [] -> if r = 0 && i = windowSize then [arr.Clone() :?> 'T[]] else []
+                    | h::t ->
+                        arr.[i] <- h
+                        if r = 0 then
+                            let cons = LinkedList<_>()
+                            cons.AddLast(arr.Clone() :?> 'T[]) |> ignore
+                            windowedToFreshConsTail cons windowSize 0 t arr
+                            cons |> Seq.toList
+                        else
+                            loop (i+1) (r-1) t
+
+                loop 0 (windowSize - 1) list
 
 namespace Microsoft.FSharp.Collections
 
@@ -762,6 +988,417 @@ namespace Microsoft.FSharp.Collections
             checkNonNull "array" array
             if index < 0 || index >= array.Length then None
             else Some(array.[index])
+
+    [<RequireQualifiedAccess>]
+    [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+    module List =
+        open System.Collections.Generic
+        open Microsoft.FSharp.Core
+        open Local
+
+        let private rev = List.rev
+        let private toArray = List.toArray
+        let sortWith = List.sortWith
+
+        /// <summary>Returns a list that contains no duplicate entries according to generic hash and
+        /// equality comparisons on the entries.
+        /// If an element occurs multiple times in the list then the later occurrences are discarded.</summary>
+        ///
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        [<CompiledName("Distinct")>]
+        let distinct (list:'T list) = Microsoft.FSharp.Primitives.Basics.List.distinctWithComparer HashIdentity.Structural<'T> list
+
+        /// <summary>Returns a list that contains no duplicate entries according to the 
+        /// generic hash and equality comparisons on the keys returned by the given key-generating function.
+        /// If an element occurs multiple times in the list then the later occurrences are discarded.</summary>
+        ///
+        /// <param name="projection">A function transforming the list items into comparable keys.</param>
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        [<CompiledName("DistinctBy")>]
+        let distinctBy keyf (list:'T list) = Microsoft.FSharp.Primitives.Basics.List.distinctByWithComparer HashIdentity.Structural<_> keyf list
+
+        /// <summary>Returns the first N elements of the list.</summary>
+        /// <remarks>Throws <c>InvalidOperationException</c>
+        /// if the count exceeds the number of elements in the list. <c>List.truncate</c>
+        /// returns as many items as the list contains instead of throwing an exception.</remarks>
+        ///
+        /// <param name="count">The number of items to take.</param>
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        ///
+        /// <exception cref="System.ArgumentException">Thrown when the input list is empty.</exception>
+        /// <exception cref="System.InvalidOperationException">Thrown when count exceeds the number of elements
+        /// in the list.</exception>
+        [<CompiledName("Take")>]
+        let take count (list : 'T list) = Microsoft.FSharp.Primitives.Basics.List.take count list
+
+        /// <summary>Compares two lists using the given comparison function, element by element.
+        /// Returns the first non-zero result from the comparison function.  If the end of a list
+        /// is reached it returns a -1 if the first list is shorter and a 1 if the second list
+        /// is shorter.</summary>
+        ///
+        /// <param name="comparer">A function that takes an element from each list and returns an int.
+        /// If it evaluates to a non-zero value iteration is stopped and that value is returned.</param>
+        /// <param name="list1">The first input list.</param>
+        /// <param name="list2">The second input list.</param>
+        ///
+        /// <returns>The first non-zero value from the comparison function.</returns>
+        [<CompiledName("CompareWith")>]
+        let inline compareWith (comparer:'T -> 'T -> int) (list1: 'T list) (list2: 'T list) =
+            let rec loop list1 list2 =
+                 match list1, list2 with
+                 | head1 :: tail1, head2 :: tail2 ->
+                       let c = comparer head1 head2
+                       if c = 0 then loop tail1 tail2 else c
+                 | [], [] -> 0
+                 | _, [] -> 1
+                 | [], _ -> -1
+
+            loop list1 list2
+
+        /// <summary>Returns a list that contains all elements of the original list while the 
+        /// given predicate returns <c>true</c>, and then returns no further elements.</summary>
+        ///
+        /// <param name="predicate">A function that evaluates to false when no more items should be returned.</param>
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        [<CompiledName("TakeWhile")>]
+        let takeWhile p (list: 'T list) = Microsoft.FSharp.Primitives.Basics.List.takeWhile p list
+
+        /// <summary>Splits a list into two lists, at the given index.</summary>
+        /// <param name="index">The index at which the list is split.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The two split lists.</returns>
+        ///
+        /// <exception cref="System.InvalidOperationException">Thrown when split index exceeds the number of elements
+        /// in the list.</exception>
+        [<CompiledName("SplitAt")>]
+        let splitAt index (list:'T list) = Microsoft.FSharp.Primitives.Basics.List.splitAt index list
+
+        /// <summary>Applies a key-generating function to each element of a list and returns a list yielding unique
+        /// keys and their number of occurrences in the original list.</summary>
+        ///
+        /// <param name="projection">A function transforming each item of the input list into a key to be
+        /// compared against the others.</param>
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        [<CompiledName("CountBy")>]
+        let countBy projection (list:'T list) =
+            let dict = new Dictionary<Microsoft.FSharp.Core.CompilerServices.RuntimeHelpers.StructBox<'Key>,int>(Microsoft.FSharp.Core.CompilerServices.RuntimeHelpers.StructBox<'Key>.Comparer)
+            let rec loop srcList  =
+                match srcList with
+                | [] -> ()
+                | h::t ->
+                    let key = Microsoft.FSharp.Core.CompilerServices.RuntimeHelpers.StructBox (projection h)
+                    let mutable prev = 0
+                    if dict.TryGetValue(key, &prev) then dict.[key] <- prev + 1 else dict.[key] <- 1
+                    loop t
+            loop list
+            let mutable result = []
+            for group in dict do
+                result <- (group.Key.Value, group.Value) :: result
+            result |> rev
+
+        /// <summary>Returns a new list containing only the elements of the list
+        /// for which the given predicate returns "true"</summary>
+        /// <param name="predicate">The function to test the input elements.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>A list containing only the elements that satisfy the predicate.</returns>
+        [<CompiledName("Where")>]
+        let where f x = Microsoft.FSharp.Primitives.Basics.List.filter f x
+
+        /// <summary>Returns the last element for which the given function returns <c>true</c>.
+        /// Raises <c>KeyNotFoundException</c> if no such element exists.</summary>
+        /// <param name="predicate">The function to test the input elements.</param>
+        /// <param name="list">The input list.</param>
+        /// <exception cref="System.Collections.Generic.KeyNotFoundException">Thrown if the predicate evaluates to false for
+        /// all the elements of the list.</exception>
+        /// <returns>The last element that satisfies the predicate.</returns>
+        [<CompiledName("FindBack")>]
+        let findBack f list = list |> toArray |> Array.findBack f
+
+        /// <summary>Returns the index of the last element in the list
+        /// that satisfies the given predicate.
+        /// Raises <c>KeyNotFoundException</c> if no such element exists.</summary>
+        /// <param name="predicate">The function to test the input elements.</param>
+        /// <param name="list">The input list.</param>
+        /// <exception cref="System.ArgumentException">Thrown if the predicate evaluates to false for all the
+        /// elements of the list.</exception>
+        /// <returns>The index of the last element that satisfies the predicate.</returns>
+        [<CompiledName("FindIndexBack")>]
+        let findIndexBack f list = list |> toArray |> Array.findIndexBack f
+
+        /// <summary>Applies a key-generating function to each element of a list and yields a list of 
+        /// unique keys. Each unique key contains a list of all elements that match 
+        /// to this key.</summary>
+        ///
+        /// <param name="projection">A function that transforms an element of the list into a comparable key.</param>
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        [<CompiledName("GroupBy")>]
+        let groupBy keyf (list: 'T list) =
+            let dict = new Dictionary<Microsoft.FSharp.Core.CompilerServices.RuntimeHelpers.StructBox<'Key>,ResizeArray<'T>>(Microsoft.FSharp.Core.CompilerServices.RuntimeHelpers.StructBox<'Key>.Comparer)
+
+            // Build the groupings
+            let rec loop list =
+                match list with
+                | v :: t -> 
+                    let key = Microsoft.FSharp.Core.CompilerServices.RuntimeHelpers.StructBox (keyf v)
+                    let ok,prev = dict.TryGetValue(key)
+                    if ok then
+                        prev.Add(v)
+                    else 
+                        let prev = new ResizeArray<'T>(1)
+                        dict.[key] <- prev
+                        prev.Add(v)
+                    loop t
+                | _ -> ()
+            loop list
+
+            // Return the list-of-lists.
+            dict
+            |> Seq.map (fun group -> (group.Key.Value, Seq.toList group.Value))
+            |> Seq.toList
+
+        /// <summary>Returns the only element of the list.</summary>
+        ///
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The only element of the list.</returns>
+        ///        
+        /// <exception cref="System.ArgumentException">Thrown when the input does not have precisely one element.</exception>
+        [<CompiledName("ExactlyOne")>]
+        let exactlyOne (source : list<_>) =
+            match source with
+            | [x] -> x
+            | []  -> invalidArg "source" LanguagePrimitives.ErrorStrings.InputSequenceEmptyString
+            | _   -> invalidArg "source" (SR.GetString(SR.inputSequenceTooLong))
+
+        /// <summary>Returns the first element of the list, or
+        /// <c>None</c> if the list is empty.</summary>
+        /// <param name="list">The input list.</param>
+        /// <returns>The first element of the list or None.</returns>
+        [<CompiledName("TryHead")>]
+        let tryHead list = match list with (x:: _) -> Some x | [] -> None
+
+        /// <summary>Returns the last element of the list.
+        /// Return <c>None</c> if no such element exists.</summary>
+        /// <param name="list">The input list.</param>
+        /// <returns>The last element of the list or None.</returns>
+        [<CompiledName("TryLast")>]
+        let rec tryLast (list: 'T list) =
+            match list with
+            | [x] -> Some x
+            | _ :: tail -> tryLast tail
+            | [] -> None
+
+        /// <summary>Returns the last element of the list.</summary>
+        /// <param name="list">The input list.</param>
+        /// <returns>The last element of the list.</returns>
+        /// <exception cref="System.ArgumentException">Thrown when the input does not have any elements.</exception>
+        [<CompiledName("Last")>]
+        let rec last (list : 'T list) =
+            match list with
+            | [x] -> x
+            | _ :: tail -> last tail
+            | [] -> invalidArg "list" (SR.GetString(SR.inputListWasEmpty))
+
+        /// <summary>Tests if the list contains the specified element.</summary>
+        /// <param name="value">The value to locate in the input list.</param>
+        /// <param name="source">The input list.</param>
+        /// <returns>True if the input list contains the specified element; false otherwise.</returns>
+        [<CompiledName("Contains")>]
+        let inline contains e list1 =
+            let rec contains e xs1 =
+                match xs1 with
+                | [] -> false
+                | (h1::t1) -> e = h1 || contains e t1
+            contains e list1
+
+        /// <summary>Returns a list that contains one item only.</summary>
+        ///
+        /// <param name="value">The input item.</param>
+        ///
+        /// <returns>The result list of one item.</returns>
+        [<CompiledName("Singleton")>]
+        let inline singleton value = [value]
+
+        /// <summary>Returns a list of each element in the input list and its predecessor, with the
+        /// exception of the first element which is only returned as the predecessor of the second element.</summary>
+        ///
+        /// <param name="list">The input list.</param>
+        ///
+        /// <returns>The result list.</returns>
+        [<CompiledName("Pairwise")>]
+        let pairwise (list: 'T list) =
+            let array = List.toArray list
+            if array.Length < 2 then [] else
+            List.init (array.Length-1) (fun i -> array.[i],array.[i+1])
+
+        /// <summary>Returns a new list whose elements are the corresponding elements
+        /// of the input list paired with the index (from 0) of each element.</summary>
+        /// <param name="list">The input list.</param>
+        /// <returns>The list of indexed elements.</returns>
+        [<CompiledName("Indexed")>]
+        let indexed list = Microsoft.FSharp.Primitives.Basics.List.indexed list
+
+        /// <summary>Combines map and fold. Builds a new list whose elements are the results of applying the given function
+        /// to each of the elements of the input list. The function is also used to accumulate a final value.</summary>
+        /// <param name="mapping">The function to transform elements from the input list and accumulate the final value.</param>
+        /// <param name="state">The initial state.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The list of transformed elements, and the final accumulated value.</returns>
+        [<CompiledName("MapFold")>]
+        let mapFold<'T,'State,'Result> (f:'State -> 'T -> 'Result * 'State) acc list =
+            Microsoft.FSharp.Primitives.Basics.List.mapFold f acc list
+
+        /// <summary>Combines map and foldBack. Builds a new list whose elements are the results of applying the given function
+        /// to each of the elements of the input list. The function is also used to accumulate a final value.</summary>
+        /// <param name="mapping">The function to transform elements from the input list and accumulate the final value.</param>
+        /// <param name="list">The input list.</param>
+        /// <param name="state">The initial state.</param>
+        /// <returns>The list of transformed elements, and the final accumulated value.</returns>
+        [<CompiledName("MapFoldBack")>]
+        let mapFoldBack<'T,'State,'Result> (f:'T -> 'State -> 'Result * 'State) list acc =
+            match list with
+            | [] -> [], acc
+            | [h] -> let h',s' = f h acc in [h'], s'
+            | _ ->
+                let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt(f)
+                let rec loop res list =
+                    match list, res with
+                    | [], _ -> res
+                    | h::t, (list', acc') ->
+                        let h',s' = f.Invoke(h,acc')
+                        loop (h'::list', s') t
+                loop ([], acc) (rev list)
+
+        /// <summary>Indexes into the list. The first element has index 0.</summary>
+        /// <param name="index">The index to retrieve.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The value at the given index.</returns>
+        /// <exception cref="System.ArgumentException">Thrown when the index is negative or the input list does not contain enough elements.</exception>
+        [<CompiledName("Item")>]
+        let rec item index list =
+            match list with
+            | h::t when index >= 0 ->
+                if index = 0 then h else item (index - 1) t
+            | _ ->
+                invalidArg "index" (SR.GetString(SR.indexOutOfBounds))
+
+        /// <summary>Returns the list after removing the first N elements.</summary>
+        /// <param name="count">The number of elements to skip.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The list after removing the first N elements.</returns>
+        /// <exception cref="System.ArgumentException">Thrown when count is negative or exceeds the number of 
+        /// elements in the list.</exception>
+        [<CompiledName("Skip")>]
+        let skip count list =
+            if count <= 0 then list else
+            let rec loop i lst =
+                match lst with
+                | _ when i = 0 -> lst
+                | _::t -> loop (i-1) t
+                | [] -> invalidArg "count" (SR.GetString(SR.outOfRange))
+            loop count list
+
+        /// <summary>Bypasses elements in a list while the given predicate returns <c>true</c>, and then returns
+        /// the remaining elements of the list.</summary>
+        /// <param name="predicate">A function that evaluates an element of the list to a boolean value.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The result list.</returns>
+        [<CompiledName("SkipWhile")>]
+        let rec skipWhile p xs =
+            match xs with
+            | head :: tail when p head -> skipWhile p tail
+            | _ -> xs
+
+        /// <summary>Sorts the given list in descending order using Operators.compare.</summary>
+        ///
+        /// <remarks>This is a stable sort, i.e. the original order of equal elements is preserved.</remarks>
+        /// <param name="list">The input list.</param>
+        /// <returns>The sorted list.</returns>
+        [<CompiledName("SortDescending")>]
+        let inline sortDescending xs =
+            let inline compareDescending a b = compare b a
+            sortWith compareDescending xs
+
+        /// <summary>Sorts the given list in descending order using keys given by the given projection. Keys are compared using Operators.compare.</summary>
+        ///
+        /// <remarks>This is a stable sort, i.e. the original order of equal elements is preserved.</remarks>
+        /// <param name="projection">The function to transform the list elements into the type to be compared.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The sorted list.</returns>
+        [<CompiledName("SortByDescending")>]
+        let inline sortByDescending f xs =
+            let inline compareDescending a b = compare (f b) (f a)
+            sortWith compareDescending xs
+
+        /// <summary>Returns at most N elements in a new list.</summary>
+        /// <param name="count">The maximum number of items to return.</param>
+        /// <param name="array">The input list.</param>
+        /// <returns>The result list.</returns>
+        /// <exception cref="System.ArgumentException">Thrown when the count is negative.</exception>
+        [<CompiledName("Truncate")>]
+        let truncate count list = Microsoft.FSharp.Primitives.Basics.List.truncate count list
+
+        /// <summary>Returns the last element for which the given function returns <c>true.</c>.
+        /// Return <c>None</c> if no such element exists.</summary>
+        /// <param name="predicate">The function to test the input elements.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The last element for which the predicate returns true, or None if
+        /// every element evaluates to false.</returns>
+        [<CompiledName("TryFindBack")>]
+        let tryFindBack f list = list |> toArray |> Array.tryFindBack f
+
+        /// <summary>Returns the index of the last element in the list
+        /// that satisfies the given predicate.
+        /// Return <c>None</c> if no such element exists.</summary>
+        /// <param name="predicate">The function to test the input elements.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The index of the last element for which the predicate returns true, or None if
+        /// every element evaluates to false.</returns>
+        [<CompiledName("TryFindIndexBack")>]
+        let tryFindIndexBack f list = list |> toArray |> Array.tryFindIndexBack f
+
+        /// <summary>Returns a list that contains the elements generated by the given computation.
+        /// The given initial <c>state</c> argument is passed to the element generator.</summary>
+        /// <param name="generator">A function that takes in the current state and returns an option tuple of the next
+        /// element of the list and the next state value.</param>
+        /// <param name="state">The initial state value.</param>
+        /// <returns>The result list.</returns>
+        [<CompiledName("Unfold")>]
+        let unfold<'T,'State> (f:'State -> ('T*'State) option) (s:'State) = Microsoft.FSharp.Primitives.Basics.List.unfold f s
+
+        /// <summary>Returns a list of sliding windows containing elements drawn from the input
+        /// list. Each window is returned as a fresh array.</summary>
+        /// <param name="windowSize">The number of elements in each window.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The result list.</returns>
+        /// <exception cref="System.ArgumentException">Thrown when windowSize is not positive.</exception>
+        [<CompiledName("Windowed")>]
+        let windowed n x = Microsoft.FSharp.Primitives.Basics.List.windowed n x
+
+        /// <summary>Tries to find the nth element in the list.
+        /// Returns <c>None</c> if index is negative or the list does not contain enough elements.</summary>
+        /// <param name="index">The index to retrieve.</param>
+        /// <param name="list">The input list.</param>
+        /// <returns>The value at the given index or <c>None</c>.</returns>
+        [<CompiledName("TryItem")>]
+        let rec tryItem index list =
+            match list with
+            | h::t when index >= 0 ->
+                if index = 0 then Some h else tryItem (index - 1) t
+            | _ ->
+                None
 
     [<RequireQualifiedAccess>]
     [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]

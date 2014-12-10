@@ -58,7 +58,7 @@
   -->
   <Import Project="..\..\.paket\paket.targets" />
   <ItemGroup>
-    <Compile Include="Library.fs" />
+    <Compile Include="FSharp4Shim.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="mscorlib" />

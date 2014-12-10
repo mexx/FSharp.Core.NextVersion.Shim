@@ -69,6 +69,14 @@
       <Paket>True</Paket>
       <Link>ArrayModule2.fs</Link>
     </Compile>
+    <Compile Include="..\..\paket-files\fsharp\fsharp\src\fsharp\FSharp.Core.Unittests\FSharp.Core\Microsoft.FSharp.Collections\ListModule.fs">
+      <Paket>True</Paket>
+      <Link>ListModule.fs</Link>
+    </Compile>
+    <Compile Include="..\..\paket-files\fsharp\fsharp\src\fsharp\FSharp.Core.Unittests\FSharp.Core\Microsoft.FSharp.Collections\ListModule2.fs">
+      <Paket>True</Paket>
+      <Link>ListModule2.fs</Link>
+    </Compile>
     <None Include="paket.references" />
   </ItemGroup>
   <ItemGroup>
