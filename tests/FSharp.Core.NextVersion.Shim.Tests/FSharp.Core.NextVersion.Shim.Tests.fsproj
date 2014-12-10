@@ -89,6 +89,10 @@
       <Paket>True</Paket>
       <Link>StringModule.fs</Link>
     </Compile>
+    <Compile Include="..\..\paket-files\fsharp\fsharp\src\fsharp\FSharp.Core.Unittests\FSharp.Core\Microsoft.FSharp.Core\OptionModule.fs">
+      <Paket>True</Paket>
+      <Link>OptionModule.fs</Link>
+    </Compile>
     <None Include="paket.references" />
   </ItemGroup>
   <ItemGroup>

@@ -36,6 +36,7 @@ GITHUB
     src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/SeqModule.fs (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)
     src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/SeqModule2.fs (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)
     src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/StringModule.fs (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)
+    src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Core/OptionModule.fs (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)
     src/fsharp/FSharp.Core.Unittests/LibraryTestFx.fs (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)
     src/fsharp/FSharp.Core/FSCore.resx (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)
     src/fsharp/FSharp.Core/SR.fs (35a0efa85bb09b40e1bbe1ff056f99a7e952514b)

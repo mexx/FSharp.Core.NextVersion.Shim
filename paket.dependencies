@@ -18,3 +18,4 @@ github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Micros
 github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/SeqModule.fs
 github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/SeqModule2.fs
 github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/StringModule.fs
+github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Core/OptionModule.fs

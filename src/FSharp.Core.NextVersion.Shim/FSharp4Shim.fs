@@ -60,6 +60,16 @@ namespace Microsoft.FSharp.Core
                     res.Append(ch) |> ignore
             res.ToString()
 
+    [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+    module Option =
+
+        /// <summary><c>filter f inp</c> evaluates to <c>match inp with None -> None | Some x -> if f x then Some x else None</c>.</summary>
+        /// <param name="predicate">A function that evaluates whether the value contained in the option should remain, or be filtered out.</param>
+        /// <param name="option">The input option.</param>
+        /// <returns>The input if the predicate evaluates to true; otherwise, None.</returns>
+        [<CompiledName("Filter")>]
+        let filter f inp = match inp with None -> None | Some x -> if f x then Some x else None
+
 namespace Local.LanguagePrimitives
     module ErrorStrings =
         open Microsoft.FSharp.Core
