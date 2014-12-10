@@ -1,4 +1,9 @@
 namespace Microsoft.FSharp.Core.CompilerServices
+
+    open System.Threading.Tasks
+
+    open System.Threading.Tasks
+
     module RuntimeHelpers =
         open System.Collections.Generic
 
@@ -1990,3 +1995,55 @@ namespace Microsoft.FSharp.Collections
             if i < 0 then None else
             use e = source.GetEnumerator()
             IEnumerator.tryItem i e
+
+namespace Microsoft.FSharp.Control
+
+    [<assembly: AutoOpen("Microsoft.FSharp.Control")>]
+    do()
+
+    [<AutoOpen>]
+    module WebExtensions =
+        open System
+
+        type System.Net.WebClient with
+            member inline private this.Download(event: IEvent<'T, _>, handler: _ -> 'T, start, result) =
+                let downloadAsync =
+                    Async.FromContinuations (fun (cont, econt, ccont) ->
+                        let userToken = new obj()
+                        let rec delegate' (_: obj) (args : #ComponentModel.AsyncCompletedEventArgs) =
+                            // ensure we handle the completed event from correct download call
+                            if userToken = args.UserState then
+                                event.RemoveHandler handle
+                                if args.Cancelled then
+                                    ccont (new OperationCanceledException())
+                                elif args.Error <> null then
+                                    econt args.Error
+                                else
+                                    cont (result args)
+                        and handle = handler delegate'
+                        event.AddHandler handle
+                        start userToken
+                    )
+
+                async {
+                    use! _holder = Async.OnCancel(fun _ -> this.CancelAsync())
+                    return! downloadAsync
+                 }
+
+            [<CompiledName("AsyncDownloadData")>] // give the extension member a 'nice', unmangled compiled name, unique within this module
+            member this.AsyncDownloadData (address:Uri) : Async<byte[]> =
+                this.Download(
+                    event   = this.DownloadDataCompleted,
+                    handler = (fun action    -> Net.DownloadDataCompletedEventHandler(action)),
+                    start   = (fun userToken -> this.DownloadDataAsync(address, userToken)),
+                    result  = (fun args      -> args.Result)
+                )
+
+            [<CompiledName("AsyncDownloadFile")>] // give the extension member a 'nice', unmangled compiled name, unique within this module
+            member this.AsyncDownloadFile (address:Uri, fileName:string) : Async<unit> =
+                this.Download(
+                    event   = this.DownloadFileCompleted,
+                    handler = (fun action    -> ComponentModel.AsyncCompletedEventHandler(action)),
+                    start   = (fun userToken -> this.DownloadFileAsync(address, fileName, userToken)),
+                    result  = (fun _         -> ())
+                )
