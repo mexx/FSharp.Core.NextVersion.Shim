@@ -17,6 +17,10 @@ namespace Microsoft.FSharp.Core.CompilerServices
                        member __.Equals(v1,v2) = gcomparer.Equals(v1.Value,v2.Value) }
 
 namespace Microsoft.FSharp.Core
+
+    [<assembly: AutoOpen("Microsoft.FSharp.Core")>]
+    do()
+
     module internal SR =
         let keyNotFoundAlt = "An index satisfying the predicate was not found in the collection."
         let arrayWasEmpty = "The input array was empty."
@@ -33,6 +37,28 @@ namespace Microsoft.FSharp.Core
         let enumerationAlreadyFinished = "Enumeration already finished."
 
         let GetString(name:System.String) : System.String = name
+
+    [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+    [<RequireQualifiedAccess>]
+    module String =
+
+        let inline private emptyIfNull str =
+            if str = null then "" else str
+
+        /// <summary>Returns a new string containing only the characters of the string
+        /// for which the given predicate returns "true"</summary>
+        /// <param name="predicate">The function to test the input characters.</param>
+        /// <param name="list">The input string.</param>
+        /// <returns>A string containing only the characters that satisfy the predicate.</returns>
+        [<CompiledName("Filter")>]
+        let filter (predicate:char -> bool) (str:string) =
+            let str = emptyIfNull str
+            let res = System.Text.StringBuilder(str.Length)
+            for i = 0 to str.Length - 1 do
+                let ch = str.[i]
+                if predicate ch then
+                    res.Append(ch) |> ignore
+            res.ToString()
 
 namespace Local.LanguagePrimitives
     module ErrorStrings =
