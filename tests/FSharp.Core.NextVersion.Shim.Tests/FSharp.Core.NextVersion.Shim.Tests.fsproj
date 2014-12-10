@@ -77,6 +77,14 @@
       <Paket>True</Paket>
       <Link>ListModule2.fs</Link>
     </Compile>
+    <Compile Include="..\..\paket-files\fsharp\fsharp\src\fsharp\FSharp.Core.Unittests\FSharp.Core\Microsoft.FSharp.Collections\SeqModule.fs">
+      <Paket>True</Paket>
+      <Link>SeqModule.fs</Link>
+    </Compile>
+    <Compile Include="..\..\paket-files\fsharp\fsharp\src\fsharp\FSharp.Core.Unittests\FSharp.Core\Microsoft.FSharp.Collections\SeqModule2.fs">
+      <Paket>True</Paket>
+      <Link>SeqModule2.fs</Link>
+    </Compile>
     <None Include="paket.references" />
   </ItemGroup>
   <ItemGroup>

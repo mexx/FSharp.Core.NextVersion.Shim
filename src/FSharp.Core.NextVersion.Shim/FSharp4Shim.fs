@@ -23,6 +23,9 @@ namespace Microsoft.FSharp.Core
         let outOfRange = "The index is outside the legal range."
         let inputListWasEmpty = "The input list was empty."
         let indexOutOfBounds = "The index was outside the range of elements in the list."
+        let resetNotSupported = "Reset is not supported on this enumerator."
+        let enumerationNotStarted = "Enumeration has not started. Call MoveNext."
+        let enumerationAlreadyFinished = "Enumeration already finished."
 
         let GetString(name:System.String) : System.String = name
 
@@ -102,6 +105,50 @@ namespace Microsoft.FSharp.Primitives.Basics
                     res.[i] <- h'
                     acc <- s'
                 res, acc
+
+        let scanSubRight f (array : _[]) start fin initState =
+            let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt(f)
+            let mutable state = initState
+            let res = zeroCreateUnchecked (fin-start+2)
+            res.[fin - start + 1] <- state
+            for i = fin downto start do
+                state <- f.Invoke(array.[i], state);
+                res.[i - start] <- state
+            res
+
+        let stableSortWithKeysAndComparer (cFast:IComparer<'Key>) (c:IComparer<'Key>) (array:array<'T>) (keys:array<'Key>)  =
+            // 'places' is an array or integers storing the permutation performed by the sort
+            let places = zeroCreateUnchecked array.Length 
+            for i = 0 to array.Length - 1 do 
+                places.[i] <- i 
+            System.Array.Sort<_,_>(keys, places, cFast)
+            // 'array2' is a copy of the original values
+            let array2 = (array.Clone() :?> array<'T>)
+
+            // Walk through any chunks where the keys are equal
+            let mutable i = 0
+            let len = array.Length
+            let intCompare = fastComparerForArraySort<int>()
+            
+            while i <  len do 
+                let mutable j = i
+                let ki = keys.[i]
+                while j < len && (j = i || c.Compare(ki, keys.[j]) = 0) do 
+                   j <- j + 1
+                // Copy the values into the result array and re-sort the chunk if needed by the original place indexes
+                for n = i to j - 1 do
+                   array.[n] <- array2.[places.[n]]
+                if j - i >= 2 then
+                    System.Array.Sort<_,_>(places, array, i, j-i, intCompare)
+                i <- j
+
+        let stableSortInPlaceWith (comparer:'T -> 'T -> int) (array : array<'T>) =
+            let len = array.Length
+            if len > 1 then
+                let keys = (array.Clone() :?> array<'T>)
+                let comparer = OptimizedClosures.FSharpFunc<_,_,_>.Adapt(comparer)
+                let c = { new IComparer<'T> with member __.Compare(x,y) = comparer.Invoke(x,y) }
+                stableSortWithKeysAndComparer c c array keys
 
     module internal List =
         open System.Collections.Generic
@@ -351,6 +398,106 @@ namespace Microsoft.FSharp.Collections
 
     [<assembly: AutoOpen("Microsoft.FSharp.Collections")>]
     do()
+
+    module IEnumerator =
+      open System.Collections
+      open System.Collections.Generic
+      open Microsoft.FSharp.Core
+
+      let noReset() = raise (new System.NotSupportedException(SR.GetString(SR.resetNotSupported)))
+      let notStarted() = raise (new System.InvalidOperationException(SR.GetString(SR.enumerationNotStarted)))
+      let alreadyFinished() = raise (new System.InvalidOperationException(SR.GetString(SR.enumerationAlreadyFinished)))
+
+      [<NoEquality; NoComparison>]
+      type MapEnumeratorState = 
+          | NotStarted 
+          | InProcess 
+          | Finished
+
+      [<AbstractClass>]
+      type MapEnumerator<'T> () =
+          let mutable state = NotStarted
+          [<DefaultValue(false)>]
+          val mutable private curr : 'T
+          
+          member this.GetCurrent () =
+              match state with
+              |   NotStarted -> notStarted()
+              |   Finished -> alreadyFinished()
+              |   InProcess -> ()
+              this.curr
+          
+          abstract DoMoveNext : byref<'T> -> bool
+          abstract Dispose : unit -> unit
+          
+          interface IEnumerator<'T> with
+              member this.Current = this.GetCurrent()
+          
+          interface IEnumerator with
+              member this.Current = box(this.GetCurrent())
+              member this.MoveNext () =
+                  state <- InProcess
+                  if this.DoMoveNext(&this.curr) then
+                      true
+                  else
+                      state <- Finished
+                      false
+              member this.Reset() = noReset()
+          interface System.IDisposable with
+              member this.Dispose() = this.Dispose()
+
+      let rec tryItem index (e : IEnumerator<'T>) =
+          if not (e.MoveNext()) then None
+          elif index = 0 then Some(e.Current)
+          else tryItem (index-1) e
+
+      let rec nth index (e : IEnumerator<'T>) = 
+          if not (e.MoveNext()) then invalidArg "index" (SR.GetString(SR.notEnoughElements))
+          if index = 0 then e.Current
+          else nth (index-1) e
+
+      let mapi2 f (e1 : IEnumerator<_>) (e2 : IEnumerator<_>) : IEnumerator<_> =
+          let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt(f)
+          let i = ref (-1)
+          upcast
+              {  new MapEnumerator<_>() with
+                     member this.DoMoveNext curr =
+                        i := !i + 1
+                        if (e1.MoveNext() && e2.MoveNext()) then
+                           curr <- f.Invoke(!i, e1.Current, e2.Current)
+                           true
+                        else
+                           false
+                     member this.Dispose() =
+                        try
+                            e1.Dispose()
+                        finally
+                            e2.Dispose()
+              }
+
+      let map3 f (e1 : IEnumerator<_>) (e2 : IEnumerator<_>) (e3 : IEnumerator<_>) : IEnumerator<_> = 
+        let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt(f)
+        upcast 
+            {  new MapEnumerator<_>() with
+                   member this.DoMoveNext curr = 
+                      let n1 = e1.MoveNext()
+                      let n2 = e2.MoveNext()
+                      let n3 = e3.MoveNext()
+
+                      if n1 && n2 && n3 then 
+                         curr <- f.Invoke(e1.Current, e2.Current, e3.Current)
+                         true
+                      else
+                         false
+                   member this.Dispose() = 
+                      try
+                          e1.Dispose()
+                      finally
+                          try
+                              e2.Dispose()
+                          finally
+                              e3.Dispose()
+            }
 
     [<RequireQualifiedAccess>]
     [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
@@ -1403,8 +1550,37 @@ namespace Microsoft.FSharp.Collections
     [<RequireQualifiedAccess>]
     [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
     module Seq =
+        open System
+        open System.Collections
+        open System.Collections.Generic
+        open Microsoft.FSharp.Core
+        open Microsoft.FSharp.Primitives.Basics
+        open Local.LanguagePrimitives.ErrorStrings
 
-        let inline private checkNonNull argName arg = 
+        let private toArray = Seq.toArray
+        let private readonly = Seq.readonly
+        let private mapi = Seq.mapi
+
+        let private mkSeq f =
+            { new IEnumerable<'U> with
+                member x.GetEnumerator() = f()
+              interface IEnumerable with
+                member x.GetEnumerator() = (f() :> IEnumerator) }
+
+        let private mkDelayedSeq (f: unit -> IEnumerable<'T>) = mkSeq (fun () -> f().GetEnumerator())
+
+        let private foldArraySubRight (f:OptimizedClosures.FSharpFunc<'T,_,_>) (arr: 'T[]) start fin acc =
+            let mutable state = acc
+            for i = fin downto start do
+                state <- f.Invoke(arr.[i], state)
+            state
+
+        let private revamp2 f (ie1 : seq<_>) (source2 : seq<_>) =
+            mkSeq (fun () -> f (ie1.GetEnumerator()) (source2.GetEnumerator()))
+        let private revamp3 f (ie1 : seq<_>) (source2 : seq<_>) (source3 : seq<_>) =
+            mkSeq (fun () -> f (ie1.GetEnumerator()) (source2.GetEnumerator()) (source3.GetEnumerator()))
+
+        let inline private checkNonNull argName arg =
             match box arg with 
             | null -> nullArg argName
             | _ -> ()
@@ -1416,11 +1592,6 @@ namespace Microsoft.FSharp.Collections
         [<CompiledName("Replicate")>]
         let replicate count x =
             System.Linq.Enumerable.Repeat(x,count)
-
-        [<CompiledName("TryFindBack")>]
-        let tryFindBack f (source : seq<'T>) =
-            checkNonNull "source" source
-            source |> Seq.toArray |> Array.tryFindBack f
 
         /// <summary>Returns the last element for which the given function returns <c>true</c>.</summary>
         /// <remarks>This function digests the whole initial sequence as soon as it is called. As a
@@ -1435,3 +1606,387 @@ namespace Microsoft.FSharp.Collections
         let findBack f source =
             checkNonNull "source" source
             source |> Seq.toArray |> Array.findBack f
+
+        /// <summary>Returns a sequence with all elements permuted according to the
+        /// specified permutation.</summary>
+        ///
+        /// <param name="indexMap">The function that maps input indices to output indices.</param>
+        /// <param name="source">The input sequence.</param>
+        ///
+        /// <returns>The result sequence.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("Permute")>]
+        let permute f (source : seq<_>) =
+            checkNonNull "source" source
+            mkDelayedSeq (fun () ->
+                source |> toArray |> Array.permute f :> seq<_>)
+
+        /// <summary>Returns the index of the last element in the sequence
+        /// that satisfies the given predicate. Return <c>None</c> if no such element exists.</summary>
+        /// <remarks>This function digests the whole initial sequence as soon as it is called. As a
+        /// result this function should not be used with large or infinite sequences.</remarks>
+        /// <param name="predicate">A function that evaluates to a Boolean when given an item in the sequence.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The found index or <c>None</c>.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("TryFindIndexBack")>]
+        let tryFindIndexBack f (source : seq<'T>) =
+            checkNonNull "source" source
+            source |> toArray |> Array.tryFindIndexBack f
+
+        /// <summary>Returns the index of the last element for which the given function returns <c>true</c>.</summary>
+        /// <remarks>This function digests the whole initial sequence as soon as it is called. As a
+        /// result this function should not be used with large or infinite sequences.</remarks>
+        /// <param name="predicate">A function to test whether the index of a particular element should be returned.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The index of the last element for which the predicate returns <c>true</c>.</returns>
+        /// <exception cref="System.Collections.Generic.KeyNotFoundException">Thrown if no element returns true when
+        /// evaluated by the predicate</exception>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null</exception>
+        [<CompiledName("FindIndexBack")>]
+        let findIndexBack f source =
+            checkNonNull "source" source
+            source |> toArray |> Array.findIndexBack f
+
+        /// <summary>Applies a function to corresponding elements of two collections, threading an accumulator argument
+        /// through the computation. The two sequences need not have equal lengths:
+        /// when one sequence is exhausted any remaining elements in the other sequence are ignored.
+        /// If the input function is <c>f</c> and the elements are <c>i0...iN</c> and <c>j0...jN</c>
+        /// then computes <c>f (... (f s i0 j0)...) iN jN</c>.</summary>
+        /// <param name="folder">The function to update the state given the input elements.</param>
+        /// <param name="state">The initial state.</param>
+        /// <param name="source1">The first input sequence.</param>
+        /// <param name="source2">The second input sequence.</param>
+        /// <returns>The final state value.</returns>
+        [<CompiledName("Fold2")>]
+        let fold2<'T1,'T2,'State> f (state:'State) (source1: seq<'T1>) (source2: seq<'T2>) =
+            checkNonNull "source1" source1
+            checkNonNull "source2" source2
+
+            use e1 = source1.GetEnumerator()
+            use e2 = source2.GetEnumerator()
+
+            let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt(f)
+
+            let mutable state = state
+            while e1.MoveNext() && e2.MoveNext() do
+                state <- f.Invoke(state, e1.Current, e2.Current)
+
+            state
+
+        /// <summary>Applies a function to each element of the collection, starting from the end, threading an accumulator argument
+        /// through the computation. If the input function is <c>f</c> and the elements are <c>i0...iN</c>
+        /// then computes <c>f i0 (... (f iN s)...)</c></summary>
+        /// <param name="folder">The function to update the state given the input elements.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <param name="state">The initial state.</param>
+        /// <returns>The state object after the folding function is applied to each element of the sequence.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("FoldBack")>]
+        let foldBack<'T,'State> f (source : seq<'T>) (x:'State) =
+            checkNonNull "source" source
+            let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt(f)
+            let arr = toArray source
+            let len = arr.Length
+            foldArraySubRight f arr 0 (len - 1) x
+
+        /// <summary>Tests if the sequence contains the specified element.</summary>
+        /// <param name="value">The value to locate in the input sequence.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>True if the input sequence contains the specified element; false otherwise.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("Contains")>]
+        let inline contains element (source : seq<'T>) =
+            checkNonNull "source" source
+            use e = source.GetEnumerator()
+            let mutable state = false
+            while (not state && e.MoveNext()) do
+                state <- element = e.Current
+            state
+
+        /// <summary>Returns the first element of the sequence, or None if the sequence is empty.</summary>
+        ///
+        /// <param name="source">The input sequence.</param>
+        ///
+        /// <returns>The first element of the sequence or None.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("TryHead")>]
+        let tryHead (source : seq<_>) =
+            checkNonNull "source" source
+            use e = source.GetEnumerator()
+            if (e.MoveNext()) then Some e.Current
+            else None
+
+        /// <summary>Returns a sequence that skips 1 element of the underlying sequence and then yields the
+        /// remaining elements of the sequence.</summary>
+        ///
+        /// <param name="source">The input sequence.</param>
+        ///
+        /// <returns>The result sequence.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        /// <exception cref="System.InvalidOperationException">Thrown when the input sequence is empty.</exception>
+        [<CompiledName("Tail")>]
+        let tail (source: seq<'T>) =
+            checkNonNull "source" source
+            seq { use e = source.GetEnumerator()
+                  if not (e.MoveNext()) then
+                      invalidArg "source" (SR.GetString(SR.notEnoughElements))
+                  while e.MoveNext() do
+                      yield e.Current }
+
+        /// <summary>Returns the last element of the sequence.
+        /// Return <c>None</c> if no such element exists.</summary>
+        ///
+        /// <param name="source">The input sequence.</param>
+        ///
+        /// <returns>The last element of the sequence or None.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("TryLast")>]
+        let tryLast (source : seq<_>) =
+            checkNonNull "source" source
+            use e = source.GetEnumerator()
+            if e.MoveNext() then
+                let mutable res = e.Current
+                while (e.MoveNext()) do res <- e.Current
+                Some res
+            else
+                None
+
+        /// <summary>Applies the given function to two collections simultaneously. If one sequence is shorter than 
+        /// the other then the remaining elements of the longer sequence are ignored. The integer passed to the
+        /// function indicates the index of element.</summary>
+        ///
+        /// <param name="action">A function to apply to each pair of elements from the input sequences along with their index.</param>
+        /// <param name="source1">The first input sequence.</param>
+        /// <param name="source2">The second input sequence.</param>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when either of the input sequences is null.</exception>
+        [<CompiledName("IterateIndexed2")>]
+        let iteri2 f (source1 : seq<_>) (source2 : seq<_>) = 
+            checkNonNull "source1" source1
+            checkNonNull "source2" source2
+            use e1 = source1.GetEnumerator()
+            use e2 = source2.GetEnumerator()
+            let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt(f)
+            let mutable i = 0 
+            while (e1.MoveNext() && e2.MoveNext()) do
+                f.Invoke(i, e1.Current, e2.Current)
+                i <- i + 1
+
+        /// <summary>Builds a new collection whose elements are the results of applying the given function
+        /// to the corresponding triples of elements from the three sequences. If one input sequence if shorter than
+        /// the others then the remaining elements of the longer sequences are ignored.</summary>
+        ///
+        /// <param name="mapping">The function to transform triples of elements from the input sequences.</param>
+        /// <param name="source1">The first input sequence.</param>
+        /// <param name="source2">The second input sequence.</param>
+        /// <param name="source3">The third input sequence.</param>
+        ///
+        /// <returns>The result sequence.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when any of the input sequences is null.</exception>
+        [<CompiledName("Map3")>]
+        let map3 f source1 source2 source3 = 
+            checkNonNull "source1" source1
+            checkNonNull "source2" source2
+            checkNonNull "source3" source3
+            revamp3 (IEnumerator.map3    f) source1 source2 source3
+
+        /// <summary>Combines map and fold. Builds a new collection whose elements are the results of applying the given function
+        /// to each of the elements of the collection. The function is also used to accumulate a final value.</summary>
+        /// <remarks>This function digests the whole initial sequence as soon as it is called. As a result this function should
+        /// not be used with large or infinite sequences.</remarks>
+        /// <param name="mapping">The function to transform elements from the input collection and accumulate the final value.</param>
+        /// <param name="state">The initial state.</param>
+        /// <param name="array">The input collection.</param>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input collection is null.</exception>
+        /// <returns>The collection of transformed elements, and the final accumulated value.</returns>
+        [<CompiledName("MapFold")>]
+        let mapFold<'T,'State,'Result> (f: 'State -> 'T -> 'Result * 'State) acc source =
+            checkNonNull "source" source
+            let arr,state = source |> toArray |> Array.mapFold f acc
+            readonly arr, state
+
+        /// <summary>Combines map and foldBack. Builds a new collection whose elements are the results of applying the given function
+        /// to each of the elements of the collection. The function is also used to accumulate a final value.</summary>
+        /// <remarks>This function digests the whole initial sequence as soon as it is called. As a result this function should
+        /// not be used with large or infinite sequences.</remarks>
+        /// <param name="mapping">The function to transform elements from the input collection and accumulate the final value.</param>
+        /// <param name="array">The input collection.</param>
+        /// <param name="state">The initial state.</param>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input collection is null.</exception>
+        /// <returns>The collection of transformed elements, and the final accumulated value.</returns>
+        [<CompiledName("MapFoldBack")>]
+        let mapFoldBack<'T,'State,'Result> (f: 'T -> 'State -> 'Result * 'State) source acc =
+            checkNonNull "source" source
+            let array = source |> toArray
+            let arr,state = Array.mapFoldBack f array acc
+            readonly arr, state
+
+        /// <summary>Builds a new collection whose elements are the results of applying the given function
+        /// to the corresponding pairs of elements from the two sequences. If one input sequence is shorter than 
+        /// the other then the remaining elements of the longer sequence are ignored. The integer index passed to the
+        /// function indicates the index (from 0) of element being transformed.</summary>
+        ///
+        /// <param name="mapping">A function to transform pairs of items from the input sequences that also supplies the current index.</param>
+        /// <param name="source1">The first input sequence.</param>
+        /// <param name="source2">The second input sequence.</param>
+        ///
+        /// <returns>The result sequence.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when either of the input sequences is null.</exception>
+        [<CompiledName("MapIndexed2")>]
+        let mapi2 f source1 source2 =
+            checkNonNull "source1" source1
+            checkNonNull "source2" source2
+            revamp2 (IEnumerator.mapi2    f) source1 source2
+
+        /// <summary>Builds a new collection whose elements are the corresponding elements of the input collection
+        /// paired with the integer index (from 0) of each element.</summary>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The result sequence.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("Indexed")>]
+        let indexed source =
+            checkNonNull "source" source
+            mapi (fun i x -> i,x) source
+
+        /// <summary>Computes the element at the specified index in the collection.</summary>
+        /// <param name="index">The index of the element to retrieve.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The element at the specified index of the sequence.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        /// <exception cref="System.ArgumentException">Thrown when the index is negative or the input sequence does not contain enough elements.</exception>
+        [<CompiledName("Item")>]
+        let item i (source : seq<'T>) =
+            checkNonNull "source" source
+            if i < 0 then invalidArg "index" (SR.GetString(SR.inputMustBeNonNegative))
+            use e = source.GetEnumerator()
+            IEnumerator.nth i e
+
+        /// <summary>Applies a function to each element of the sequence, starting from the end, threading an accumulator argument
+        /// through the computation. If the input function is <c>f</c> and the elements are <c>i0...iN</c> 
+        /// then computes <c>f i0 (...(f iN-1 iN))</c>.</summary>
+        /// <param name="reduction">A function that takes in the next-to-last element of the sequence and the
+        /// current accumulated result to produce the next accumulated result.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The final result of the reductions.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        /// <exception cref="System.ArgumentException">Thrown when the input sequence is empty.</exception>
+        [<CompiledName("ReduceBack")>]
+        let reduceBack f (source : seq<'T>) =
+            checkNonNull "source" source
+            let arr = toArray source
+            match arr.Length with
+            | 0 -> invalidArg "source" InputSequenceEmptyString
+            | len ->
+                let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt(f)
+                foldArraySubRight f arr 0 (len - 2) arr.[len - 1]
+
+        /// <summary>Returns a new sequence with the elements in reverse order.</summary>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The reversed sequence.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("Reverse")>]
+        let rev source =
+            checkNonNull "source" source
+            mkDelayedSeq (fun () ->
+                let array = source |> toArray
+                Array.Reverse array
+                array :> seq<_>)
+
+        /// <summary>Like <c>foldBack</c>, but returns the sequence of intermediary and final results.</summary>
+        /// <remarks>This function returns a sequence that digests the whole initial sequence as soon as that
+        /// sequence is iterated. As a result this function should not be used with large or infinite sequences.
+        /// </remarks>
+        /// <param name="folder">A function that updates the state with each element from the sequence.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <param name="state">The initial state.</param>
+        /// <returns>The resulting sequence of computed states.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("ScanBack")>]
+        let scanBack<'T,'State> f (source : seq<'T>) (acc:'State) =
+            checkNonNull "source" source
+            mkDelayedSeq(fun () ->
+                let arr = source |> toArray
+                let res = Array.scanSubRight f arr 0 (arr.Length - 1) acc
+                res :> seq<_>)
+
+        let sortWith f source =
+            checkNonNull "source" source
+            mkDelayedSeq (fun () ->
+                let array = source |> toArray
+                Array.stableSortInPlaceWith f array
+                array :> seq<_>)
+
+        /// <summary>Yields a sequence ordered descending by keys.</summary>
+        /// 
+        /// <remarks>This function returns a sequence that digests the whole initial sequence as soon as 
+        /// that sequence is iterated. As a result this function should not be used with 
+        /// large or infinite sequences. The function makes no assumption on the ordering of the original 
+        /// sequence.
+        ///
+        /// This is a stable sort, that is the original order of equal elements is preserved.</remarks>
+        ///
+        /// <param name="source">The input sequence.</param>
+        ///
+        /// <returns>The result sequence.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("SortDescending")>]
+        let inline sortDescending source =
+            checkNonNull "source" source
+            let inline compareDescending a b = compare b a
+            sortWith compareDescending source
+
+        /// <summary>Applies a key-generating function to each element of a sequence and yield a sequence ordered
+        /// descending by keys.  The keys are compared using generic comparison as implemented by <c>Operators.compare</c>.</summary> 
+        /// 
+        /// <remarks>This function returns a sequence that digests the whole initial sequence as soon as 
+        /// that sequence is iterated. As a result this function should not be used with 
+        /// large or infinite sequences. The function makes no assumption on the ordering of the original 
+        /// sequence.
+        ///
+        /// This is a stable sort, that is the original order of equal elements is preserved.</remarks>
+        ///
+        /// <param name="projection">A function to transform items of the input sequence into comparable keys.</param>
+        /// <param name="source">The input sequence.</param>
+        ///
+        /// <returns>The result sequence.</returns>
+        ///
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("SortByDescending")>]
+        let inline sortByDescending keyf source =
+            checkNonNull "source" source
+            let inline compareDescending a b = compare (keyf b) (keyf a)
+            sortWith compareDescending source
+
+        /// <summary>Returns the last element for which the given function returns <c>true</c>.
+        /// Return <c>None</c> if no such element exists.</summary>
+        /// <remarks>This function digests the whole initial sequence as soon as it is called. As a
+        /// result this function should not be used with large or infinite sequences.</remarks>
+        /// <param name="predicate">A function that evaluates to a Boolean when given an item in the sequence.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The found element or <c>None</c>.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("TryFindBack")>]
+        let tryFindBack f (source : seq<'T>) =
+            checkNonNull "source" source
+            source |> toArray |> Array.tryFindBack f
+
+        /// <summary>Tries to find the nth element in the sequence.
+        /// Returns <c>None</c> if index is negative or the input sequence does not contain enough elements.</summary>
+        /// <param name="index">The index of element to retrieve.</param>
+        /// <param name="source">The input sequence.</param>
+        /// <returns>The nth element of the sequence or <c>None</c>.</returns>
+        /// <exception cref="System.ArgumentNullException">Thrown when the input sequence is null.</exception>
+        [<CompiledName("TryItem")>]
+        let tryItem i (source : seq<'T>) =
+            checkNonNull "source" source
+            if i < 0 then None else
+            use e = source.GetEnumerator()
+            IEnumerator.tryItem i e
