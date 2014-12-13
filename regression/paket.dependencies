@@ -8,8 +8,6 @@ nuget FAKE
 nuget SourceLink.Fake
 
 github fsharp/FAKE modules/Octokit/Octokit.fsx
-github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core/SR.fs
-github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core/FSCore.resx
 github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/LibraryTestFx.fs
 github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/ArrayModule.fs
 github fsharp/fsharp:fsharp4 src/fsharp/FSharp.Core.Unittests/FSharp.Core/Microsoft.FSharp.Collections/ArrayModule2.fs
