@@ -93,6 +93,7 @@
       <Paket>True</Paket>
       <Link>OptionModule.fs</Link>
     </Compile>
+    <Compile Include="LocalTests.fs" />
     <None Include="paket.references" />
   </ItemGroup>
   <ItemGroup>
