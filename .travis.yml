@@ -1,12 +1,10 @@
-language: objective-c
+language: csharp
 
-env:
-  matrix:
-    - MONO_VERSION="3.10.0"
+solution: regression/FSharp.Core.NextVersion.Shim.sln
 
-install:
-  - wget "http://download.mono-project.com/archive/${MONO_VERSION}/macos-10-x86/MonoFramework-MDK-${MONO_VERSION}.macos10.xamarin.x86.pkg"
-  - sudo installer -pkg "MonoFramework-MDK-${MONO_VERSION}.macos10.xamarin.x86.pkg" -target /
+before_script:
+  - cd regression
+  - chmod +x build.sh
 
-script: 
-  - cd regression; ./build.sh All
+script:
+  - ./build.sh All
