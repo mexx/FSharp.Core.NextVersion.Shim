@@ -70,6 +70,51 @@ namespace Microsoft.FSharp.Core
         [<CompiledName("Filter")>]
         let filter f inp = match inp with None -> None | Some x -> if f x then Some x else None
 
+        /// <summary>Convert the option to a Nullable value.</summary>
+        /// <param name="option">The input option.</param>
+        /// <returns>The result value.</returns>
+        [<CompiledName("ToNullable")>]
+        let toNullable option = match option with None -> System.Nullable() | Some v -> System.Nullable(v)
+
+        /// <summary>Convert a Nullable value to an option.</summary>
+        /// <param name="value">The input nullable value.</param>
+        /// <returns>The result option.</returns>
+        [<CompiledName("OfNullable")>]
+        let ofNullable (value:System.Nullable<'T>) = if value.HasValue then Some value.Value else None
+
+        /// <summary>Convert a potentially null value to an option.</summary>
+        /// <param name="value">The input value.</param>
+        /// <returns>The result option.</returns>
+        [<CompiledName("OfObj")>]
+        let ofObj value = match value with null -> None | _ -> Some value
+
+        /// <summary>Convert an option to a potentially null value.</summary>
+        /// <param name="value">The input value.</param>
+        /// <returns>The result value, which is null if the input was None.</returns>
+        [<CompiledName("ToObj")>]
+        let toObj value = match value with None -> null | Some x -> x
+
+    [<AutoOpen>]
+    module Operators =
+
+        /// <summary>Try to unbox a strongly typed value.</summary>
+        /// <param name="value">The boxed value.</param>
+        /// <returns>The unboxed result as an option.</returns>
+        [<CompiledName("TryUnbox")>]
+        let inline tryUnbox (x:obj) =
+            match x with
+            | :? 'T as v -> Some v
+            | _ -> None
+
+        /// <summary>Determines whether the given value is null.</summary>
+        /// <param name="value">The value to check.</param>
+        /// <returns>True when value is null, false otherwise.</returns>
+        [<CompiledName("IsNull")>]
+        let inline isNull (value : 'T) =
+            match value with
+            | null -> true
+            | _ -> false
+
 namespace Local.LanguagePrimitives
     module ErrorStrings =
         open Microsoft.FSharp.Core
