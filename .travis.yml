@@ -1,7 +1,5 @@
 language: csharp
 
-solution: regression/FSharp.Core.NextVersion.Shim.sln
-
 before_script:
   - cd regression
   - chmod +x build.sh
